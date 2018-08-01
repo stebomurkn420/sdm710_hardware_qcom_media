@@ -101,7 +101,7 @@ LOCAL_SHARED_LIBRARIES    := liblog libcutils libdl libplatformconfig
 # ifeq ($(BOARD_USES_ADRENO), true)
 LOCAL_SHARED_LIBRARIES    += libc2dcolorconvert
 # endif # ($(BOARD_USES_ADRENO), true)
-LOCAL_SHARED_LIBRARIES += libqdMetaData_sdm710
+LOCAL_SHARED_LIBRARIES += libqdMetaData
 LOCAL_STATIC_LIBRARIES    := libOmxVidcCommon
 
 LOCAL_SRC_FILES   := src/omx_video_base.cpp
@@ -136,7 +136,7 @@ LOCAL_ADDITIONAL_DEPENDENCIES   := $(libmm-venc-add-dep)
 
 LOCAL_PRELINK_MODULE      := false
 LOCAL_SHARED_LIBRARIES    := liblog libcutils libdl libplatformconfig libMpeg4SwEncoder
-LOCAL_SHARED_LIBRARIES    += libqdMetaData_sdm710
+LOCAL_SHARED_LIBRARIES    += libqdMetaData
 
 ifeq ($(call is-board-platform-in-list, $(TARGETS_THAT_SUPPORT_SW_VENC_ROTATION)),true)
 LOCAL_SHARED_LIBRARIES += libui
