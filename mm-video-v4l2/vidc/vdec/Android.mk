@@ -108,7 +108,7 @@ LOCAL_ADDITIONAL_DEPENDENCIES   := $(libmm-vdec-add-dep)
 LOCAL_PRELINK_MODULE    := false
 LOCAL_SHARED_LIBRARIES  := liblog libcutils libdl
 LOCAL_SHARED_LIBRARIES  += libc2dcolorconvert
-LOCAL_SHARED_LIBRARIES  += libqdMetaData_sdm710
+LOCAL_SHARED_LIBRARIES  += libqdMetaData
 LOCAL_SHARED_LIBRARIES  += libplatformconfig
 
 LOCAL_SRC_FILES         := src/ts_parser.cpp
