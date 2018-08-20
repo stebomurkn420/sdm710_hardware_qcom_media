@@ -191,6 +191,8 @@ venc_dev::venc_dev(class omx_venc *venc_class)
          strlcpy(m_debug.log_loc, property_value, PROPERTY_VALUE_MAX);
 
     mUseAVTimerTimestamps = false;
+    mIsGridset = false;
+    mTileDimension = 0;
 
     profile_level_converter::init();
 }
@@ -1409,12 +1411,12 @@ bool venc_dev::venc_open(OMX_U32 codec)
         profile_level.level = V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_0;
         minqp = 0;
         maxqp = 127;
-    } else if (codec == OMX_VIDEO_CodingHEVC || codec == OMX_VIDEO_CodingHEIC) {
+    } else if (codec == OMX_VIDEO_CodingHEVC || codec == OMX_VIDEO_CodingImageHEIC) {
         m_sVenc_cfg.codectype = V4L2_PIX_FMT_HEVC;
         idrperiod.idrperiod = 1;
         minqp = 0;
         maxqp = 51;
-        if (codec == OMX_VIDEO_CodingHEIC)
+        if (codec == OMX_VIDEO_CodingImageHEIC)
             codec_profile.profile = V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN_STILL_PIC;
         else
             codec_profile.profile = V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN;
@@ -2013,13 +2015,6 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                 } else if (portDefn->nPortIndex == PORT_INDEX_OUT) {
                     unsigned long codectype = venc_get_codectype(portDefn->format.video.eCompressionFormat);
 
-                    if (portDefn->format.video.eCompressionFormat == OMX_VIDEO_CodingHEIC) {
-                        portDefn->format.video.nFrameWidth = DEFAULT_TILE_DIMENSION;
-                        portDefn->format.video.nFrameHeight = DEFAULT_TILE_DIMENSION;
-                        DEBUG_PRINT_HIGH("set_parameter: OMX_IndexParamPortDefinition: port %d, wxh (for HEIC coding type) %dx%d",
-                            portDefn->nPortIndex, portDefn->format.video.nFrameWidth,
-                            portDefn->format.video.nFrameHeight);
-                    }
                     //Don't worry about width/height if downscalar is enabled.
                     if (((m_sVenc_cfg.dvs_height != portDefn->format.video.nFrameHeight ||
                             m_sVenc_cfg.dvs_width != portDefn->format.video.nFrameWidth) && !downscalar_enabled) ||
@@ -2115,13 +2110,13 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                 DEBUG_PRINT_LOW("venc_set_param: OMX_IndexParamVideoBitrate");
 
                 if (pParam->nPortIndex == (OMX_U32) PORT_INDEX_OUT) {
-                    if (!venc_set_target_bitrate(pParam->nTargetBitrate)) {
-                        DEBUG_PRINT_ERROR("ERROR: Setting Target Bit Rate / Quality Factor failed");
+                    if (!venc_set_ratectrl_cfg(pParam->eControlRate)) {
+                        DEBUG_PRINT_ERROR("ERROR: Rate Control setting failed");
                         return false;
                     }
 
-                    if (!venc_set_ratectrl_cfg(pParam->eControlRate)) {
-                        DEBUG_PRINT_ERROR("ERROR: Rate Control setting failed");
+                    if (!venc_set_target_bitrate(pParam->nTargetBitrate)) {
+                        DEBUG_PRINT_ERROR("ERROR: Setting Target Bit Rate / Quality Factor failed");
                         return false;
                     }
                 } else {
@@ -2258,9 +2253,9 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                 OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE* pParam =
                        (OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE*)paramData;
 
-                if (m_codec != OMX_VIDEO_CodingHEIC) {
-                    DEBUG_PRINT_ERROR("OMX_IndexParamVideoAndroidImageGrid is only supported for HEIC");
-                    return false;
+                if (m_codec != OMX_VIDEO_CodingImageHEIC) {
+                    DEBUG_PRINT_ERROR("OMX_IndexParamVideoAndroidImageGrid is only set for HEIC Encode (HW tiling)");
+                    return true;
                 }
 
                 if (!venc_set_tile_dimension(pParam->nTileWidth)) {
@@ -3446,6 +3441,27 @@ unsigned venc_dev::venc_start(void)
         return 1;
     }
 
+    if(m_codec == OMX_VIDEO_CodingImageHEIC && mIsGridset) {
+        struct v4l2_format fmt;
+        memset(&fmt, 0, sizeof(fmt));
+        fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+        fmt.fmt.pix_mp.height = mTileDimension;
+        fmt.fmt.pix_mp.width = mTileDimension;
+        fmt.fmt.pix_mp.pixelformat = m_sVenc_cfg.codectype;
+        DEBUG_PRINT_INFO("set format type %d, wxh %dx%d, pixelformat %#x",
+                 fmt.type, fmt.fmt.pix_mp.width, fmt.fmt.pix_mp.height,
+                 fmt.fmt.pix_mp.pixelformat);
+        if (ioctl(m_nDriver_fd, VIDIOC_S_FMT, &fmt)) {
+            DEBUG_PRINT_ERROR("set format failed, type %d, wxh %dx%d, pixelformat %#x",
+                 fmt.type, fmt.fmt.pix_mp.width, fmt.fmt.pix_mp.height,
+                 fmt.fmt.pix_mp.pixelformat);
+            hw_overload = errno == EBUSY;
+            return false;
+        }
+
+
+    }
+
     buf_type=V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
     DEBUG_PRINT_LOW("send_command_proxy(): Idle-->Executing");
     ret=ioctl(m_nDriver_fd, VIDIOC_STREAMON,&buf_type);
@@ -4161,6 +4177,7 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
          m_sVenc_cfg.inputformat != V4L2_PIX_FMT_NV12_UBWC)) {
         if (bframe_implicitly_enabled) {
             DEBUG_PRINT_HIGH("Disabling implicitly enabled B-frames");
+            intra_period.num_pframes = nPframes_cache;
             if (!_venc_set_intra_period(intra_period.num_pframes, 0)) {
                 DEBUG_PRINT_ERROR("Failed to set nPframes/nBframes");
                 return OMX_ErrorUndefined;
@@ -4253,7 +4270,7 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
             }
 
             // Tiling in HEIC requires output WxH to be Tile size; difference is permitted
-            if (!(m_codec == OMX_VIDEO_CodingHEIC) &&
+            if (!(m_codec == OMX_VIDEO_CodingImageHEIC) &&
                 inp_width * inp_height != out_width * out_height) {
                 DEBUG_PRINT_ERROR("Downscalar is disabled and input/output dimenstions don't match");
                 DEBUG_PRINT_ERROR("Input WxH : %dx%d Output WxH : %dx%d",inp_width, inp_height, out_width, out_height);
@@ -5034,7 +5051,7 @@ bool venc_dev::venc_reconfigure_intra_period()
         ((codec_profile.profile == V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN) ||
          (codec_profile.profile == V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN10) ||
          (codec_profile.profile == V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN_STILL_PIC)) &&
-         (m_codec != OMX_VIDEO_CodingHEIC)) {
+         (m_codec != OMX_VIDEO_CodingImageHEIC)) {
         isValidCodec = true;
     }
 
@@ -5081,6 +5098,7 @@ bool venc_dev::venc_reconfigure_intra_period()
 
     if (enableBframes && intra_period.num_bframes == 0) {
         intra_period.num_bframes = VENC_BFRAME_MAX_COUNT;
+        nPframes_cache = intra_period.num_pframes;
         intra_period.num_pframes = intra_period.num_pframes / (1 + intra_period.num_bframes);
         bframe_implicitly_enabled = true;
     } else if (!enableBframes && intra_period.num_bframes > 0) {
@@ -5150,6 +5168,8 @@ bool venc_dev::venc_set_tile_dimension(OMX_U32 nTileDimension)
     }
 
     DEBUG_PRINT_LOW("Success IOCTL set control for id=%d, value=%d", control.id, control.value);
+    mIsGridset = true;
+    mTileDimension = nTileDimension;
 
     return true;
 }
@@ -5173,7 +5193,7 @@ bool venc_dev::_venc_set_intra_period(OMX_U32 nPFrames, OMX_U32 nBFrames)
 
     if (m_sVenc_cfg.codectype != V4L2_PIX_FMT_H264 &&
         m_sVenc_cfg.codectype != V4L2_PIX_FMT_HEVC &&
-        m_codec == OMX_VIDEO_CodingHEIC) {
+        m_codec == OMX_VIDEO_CodingImageHEIC) {
         nBFrames = 0;
     }
 
@@ -5636,7 +5656,7 @@ unsigned long venc_dev::venc_get_codectype(OMX_VIDEO_CODINGTYPE eCompressionForm
     case OMX_VIDEO_CodingVP9:
         codectype = V4L2_PIX_FMT_VP9;
         break;
-    case OMX_VIDEO_CodingHEIC:
+    case OMX_VIDEO_CodingImageHEIC:
     case OMX_VIDEO_CodingHEVC:
         codectype = V4L2_PIX_FMT_HEVC;
         break;
