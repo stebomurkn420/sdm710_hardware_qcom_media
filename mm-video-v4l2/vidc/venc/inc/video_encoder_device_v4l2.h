@@ -406,6 +406,7 @@ class venc_dev
 #endif
         };
 
+        int nPframes_cache;
         int stopped;
         int resume_in_stopped;
         bool m_max_allowed_bitrate_check;
@@ -591,6 +592,8 @@ class venc_dev
         BatchInfo mBatchInfo;
         bool mUseAVTimerTimestamps;
         bool venc_set_hdr_info(const MasteringDisplay&, const ContentLightLevel&);
+        bool mIsGridset;
+        OMX_U32 mTileDimension;
 };
 
 enum instance_state {
