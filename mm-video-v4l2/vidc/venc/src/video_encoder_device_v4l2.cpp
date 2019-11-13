@@ -2743,12 +2743,12 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                 csc_enable = pParam->bEnable;
                 DEBUG_PRINT_INFO("CSC settings: Enabled : %d ", pParam->bEnable);
             }
+            [[fallthrough]];
         default:
             DEBUG_PRINT_ERROR("ERROR: Unsupported parameter in venc_set_param: %u",
                     index);
             break;
-    }
-
+    } 
     return true;
 }
 
